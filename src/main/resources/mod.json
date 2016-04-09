@@ -1,0 +1,5 @@
+{
+  "main":"com.abhiroop.chat.ServerVerticle",
+  "description":"Chat Server",
+  "author": "Abhiroop Sarkar"
+}
