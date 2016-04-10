@@ -1,14 +1,23 @@
 package com.abhiroop.chat;
 
-
-
 import java.io.File;
+import java.io.IOException;
+import java.util.Date;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.buffer.Buffer;
+import org.vertx.java.core.eventbus.EventBus;
 import org.vertx.java.core.http.HttpServerRequest;
 import org.vertx.java.core.http.RouteMatcher;
+import org.vertx.java.core.http.ServerWebSocket;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.platform.Verticle;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /*
  * Design and implement a basic mobile messaging server. The server handles following:
@@ -20,19 +29,29 @@ You are free to implement it in any language and framework but the submission it
 
 Instead of mobile devices, there could be emulating threads(OR any set of agents capable of making socket connections, breaking, remaking connections etc) in a test suite proxying for real devices.
 
-While the implementation is important, sharp focus on the design in terms of robustness, fault tolerance, scalability and efficiency of the system is what we are particularly looking for. For example a realistic implementation in a limited time frame can accommodate only above mentioned requirements but the design should be able to handle all the requirements and edge cases that a real mobile messaging server needs to handle.
+While the implementation is important, sharp focus on the design in terms of robustness, fault tolerance, scalability and 
+efficiency of the system is what we are particularly looking for. For example a realistic implementation in a limited time 
+frame can accommodate only above mentioned requirements but the design should be able to handle all the requirements and edge 
+cases that a real mobile messaging server needs to handle.
  */
 
 public class ServerVerticle extends Verticle {
 	
+	final Logger logger = container.logger();
+	Cache cache = new Cache();
+	
 	@Override
 	public void start(){
-		
-		Logger logger = container.logger();
-		
-		
 		//HTTP Server
-		RouteMatcher routeMatcher =new RouteMatcher().get("/", new Handler<HttpServerRequest>() {
+		RouteMatcher routeMatcher = getRoute();
+		vertx.createHttpServer().requestHandler(routeMatcher).listen(8080,"localhost");
+
+		//Websocket Sever
+		vertx.createHttpServer().websocketHandler(generateSocketHandler()).listen(8090);
+	}
+	
+	private RouteMatcher getRoute() {	
+		return new RouteMatcher().get("/", new Handler<HttpServerRequest>() {
 			public void handle(HttpServerRequest event) {
 				event.response().sendFile("web/display.html");
 			}
@@ -42,8 +61,72 @@ public class ServerVerticle extends Verticle {
 				event.response().sendFile("web/"+new File(event.path()));
 			}
 		});
-		vertx.createHttpServer().requestHandler(routeMatcher).listen(8080,"localhost");
-		
 	}
 
+	private Handler<ServerWebSocket> generateSocketHandler() {
+		final Pattern pattern = Pattern.compile("/chat/(\\w+)"); //identifies individual users
+		final EventBus eventBus = vertx.eventBus();
+		return new Handler<ServerWebSocket>() {
+
+			public void handle(final ServerWebSocket event) {
+				
+				final Matcher m = pattern.matcher(event.path());
+				if (!m.matches()) {
+					event.reject();
+					return;
+				}
+
+				final String chatRoom = m.group(1);
+				final String id = event.textHandlerID();
+				logger.info("Registering new connection");
+				vertx.sharedData().getSet(chatRoom).add(id);
+
+				event.closeHandler(new Handler<Void>() {
+					public void handle(final Void event) {
+						logger.info("Unregistering connection id: " + id);
+						vertx.sharedData().getSet(chatRoom).remove(id);
+					}
+				});
+				
+				event.dataHandler(new Handler<Buffer>() {
+
+					public void handle(Buffer buffer) {
+						ObjectMapper mapper = new ObjectMapper();
+						try{
+							JsonNode rootNode = mapper.readTree(buffer.toString());
+							
+							//Cache Behavior
+							long storedTime=cache.getTime();
+							String storedMessage=cache.getMessage();
+							long currentTime=new Date().getTime();
+							String currentMessage=rootNode.get("message").toString();
+							cache.setTime(currentTime);
+							cache.setMessage(currentMessage);
+							
+							if(checkCondition(storedTime,storedMessage,currentTime,currentMessage)){
+								((ObjectNode) rootNode).put("received", currentTime);
+								String jsonOutput = mapper.writeValueAsString(rootNode);
+								logger.info("Json generated: " + jsonOutput);
+								for (Object chatter : vertx.sharedData().getSet(chatRoom)) {
+									eventBus.send((String) chatter, jsonOutput);
+								}
+							}
+							
+						}catch(IOException e){
+							 event.reject();
+						}	
+					}
+					private boolean checkCondition(long storedTime, String storedMessage, long currentTime,
+							String currentMessage) {
+						if(storedMessage.equals(currentMessage) && (currentTime-storedTime)<= 5000){
+							return false;
+						}
+						return true;
+					}
+				});
+				
+				
+			}
+		};
+	}
 }
