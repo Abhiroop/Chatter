@@ -37,7 +37,6 @@ cases that a real mobile messaging server needs to handle.
 
 public class ServerVerticle extends Verticle {
 	
-	final Logger logger = container.logger();
 	Cache cache = new Cache();
 	
 	@Override
@@ -64,6 +63,7 @@ public class ServerVerticle extends Verticle {
 	}
 
 	private Handler<ServerWebSocket> generateSocketHandler() {
+		final Logger logger = container.logger();
 		final Pattern pattern = Pattern.compile("/chat/(\\w+)"); //identifies individual users
 		final EventBus eventBus = vertx.eventBus();
 		return new Handler<ServerWebSocket>() {
@@ -96,17 +96,18 @@ public class ServerVerticle extends Verticle {
 							JsonNode rootNode = mapper.readTree(buffer.toString());
 							
 							//Cache Behavior
+							Date date =new Date();
 							long storedTime=cache.getTime();
 							String storedMessage=cache.getMessage();
-							long currentTime=new Date().getTime();
+							long currentTime=date.getTime();
 							String currentMessage=rootNode.get("message").toString();
 							cache.setTime(currentTime);
 							cache.setMessage(currentMessage);
 							
 							if(checkCondition(storedTime,storedMessage,currentTime,currentMessage)){
-								((ObjectNode) rootNode).put("received", currentTime);
+								((ObjectNode) rootNode).put("received", date.toString());
 								String jsonOutput = mapper.writeValueAsString(rootNode);
-								logger.info("Json generated: " + jsonOutput);
+								logger.info("JSON: " + jsonOutput);
 								for (Object chatter : vertx.sharedData().getSet(chatRoom)) {
 									eventBus.send((String) chatter, jsonOutput);
 								}
@@ -119,6 +120,7 @@ public class ServerVerticle extends Verticle {
 					private boolean checkCondition(long storedTime, String storedMessage, long currentTime,
 							String currentMessage) {
 						if(storedMessage.equals(currentMessage) && (currentTime-storedTime)<= 5000){
+							logger.info("Duplicate Rejected");
 							return false;
 						}
 						return true;
