@@ -1,6 +1,6 @@
 #CHATTER
 
-An event based non blocking asynchronous chat server and its corresponding minimal client.
+An event based, non blocking, asynchronous chat server and its corresponding minimal client.
 
 ###Instructions to set up.
 `git clone <repo url>`
